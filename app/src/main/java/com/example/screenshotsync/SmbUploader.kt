@@ -25,21 +25,7 @@ class SmbUploader(
     private val baseUrl: String = buildBaseUrl(host, sharePath)
     private val domain: String = domain.trim()
 
-    private fun context(): CIFSContext {
-        val props = Properties().apply {
-            // Win11 默认走 SMB2/3
-            put("jcifs.smb.client.minVersion", "SMB202")
-            put("jcifs.smb.client.maxVersion", "SMB311")
-            put("jcifs.smb.client.responseTimeout", "30000")
-            put("jcifs.smb.client.soTimeout", "35000")
-            put("jcifs.smb.client.connTimeout", "10000")
-        }
-        val base = BaseContext(PropertyConfiguration(props))
-        val auth = NtlmPasswordAuthenticator(domain, username, password)
-        return base.withCredentials(auth)
-    }
-
-    private val ctx: CIFSContext by lazy { context() }
+    private val ctx: CIFSContext by lazy { buildContext(username, password, domain) }
 
     /** 校验连接与凭据：目标目录可访问则返回 null，否则返回错误信息 */
     fun connectError(): String? {
@@ -75,6 +61,38 @@ class SmbUploader(
     }
 
     companion object {
+        /** 构造一个带超时配置、绑定指定凭据的 jcifs 上下文 */
+        private fun buildContext(username: String, password: String, domain: String): CIFSContext {
+            val props = Properties().apply {
+                put("jcifs.smb.client.minVersion", "SMB202")
+                put("jcifs.smb.client.maxVersion", "SMB311")
+                put("jcifs.smb.client.responseTimeout", "30000")
+                put("jcifs.smb.client.soTimeout", "35000")
+                put("jcifs.smb.client.connTimeout", "10000")
+            }
+            val base = BaseContext(PropertyConfiguration(props))
+            val auth = NtlmPasswordAuthenticator(domain.trim(), username, password)
+            return base.withCredentials(auth)
+        }
+
+        /**
+         * 登录验证：用给定凭据连接服务器根并列出共享，验证主机可达且账号密码正确。
+         * @return 成功返回 null，失败返回错误信息。
+         */
+        fun loginError(host: String, username: String, password: String, domain: String): String? {
+            val cleanedHost = host.trim().removePrefix("smb://").trim('/')
+            if (cleanedHost.isBlank()) return "请填写服务器 IP"
+            return try {
+                val ctx = buildContext(username, password, domain)
+                val root = SmbFile("smb://$cleanedHost/", ctx)
+                // 列出共享会触发认证：凭据错误时抛 SmbAuthException，主机不可达时抛连接异常
+                root.list()
+                null
+            } catch (e: Exception) {
+                "登录失败：${e.message}"
+            }
+        }
+
         private fun buildBaseUrl(host: String, sharePath: String): String {
             val cleanedHost = host.trim().removePrefix("smb://").trim('/')
             val segments = sharePath.trim()

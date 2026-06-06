@@ -36,6 +36,14 @@ class Prefs(context: Context) {
         get() = sp.getBoolean(KEY_AUTO, false)
         set(v) = sp.edit().putBoolean(KEY_AUTO, v).apply()
 
+    /**
+     * 是否已「登录」到当前服务器。
+     * 登录 = 已用当前凭据成功连接过服务器；登录后锁定服务器输入框，退出登录后才能切换服务器。
+     */
+    var loggedIn: Boolean
+        get() = sp.getBoolean(KEY_LOGGED_IN, false)
+        set(v) = sp.edit().putBoolean(KEY_LOGGED_IN, v).apply()
+
     /** 后台监视服务是否处于「已开启」状态（用于开机自启与重新打开 App 时恢复） */
     var serviceEnabled: Boolean
         get() = sp.getBoolean(KEY_SERVICE, false)
@@ -95,6 +103,7 @@ class Prefs(context: Context) {
         private const val KEY_PASS = "pass"
         private const val KEY_DOMAIN = "domain"
         private const val KEY_AUTO = "auto"
+        private const val KEY_LOGGED_IN = "logged_in"
         private const val KEY_SERVICE = "service_enabled"
         private const val KEY_PAUSED = "paused"
         private const val KEY_RESUME_AT = "resume_at"

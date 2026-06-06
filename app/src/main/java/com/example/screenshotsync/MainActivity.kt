@@ -19,7 +19,9 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.example.screenshotsync.databinding.ActivityMainBinding
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
 class MainActivity : AppCompatActivity() {
@@ -45,8 +47,11 @@ class MainActivity : AppCompatActivity() {
 
         restoreFields()
         renderPairs()
+        applyLoginState()
 
         binding.btnAddPair.setOnClickListener { pickFolderLauncher.launch(null) }
+        binding.btnLogin.setOnClickListener { onLoginClicked() }
+        binding.btnLogout.setOnClickListener { onLogoutClicked() }
         binding.btnSync.setOnClickListener { onStartClicked() }
         binding.btnPause.setOnClickListener { onPauseToggle() }
         binding.btnPause30.setOnClickListener { SyncService.pause30(this) }
@@ -55,8 +60,8 @@ class MainActivity : AppCompatActivity() {
 
         observeState()
 
-        // 打开即自动开启后台同步
-        if (prefs.autoSync && prefs.host.isNotBlank() && prefs.pairs.isNotEmpty()) {
+        // 打开即自动开启后台同步（需已登录）
+        if (prefs.autoSync && prefs.loggedIn && prefs.host.isNotBlank() && prefs.pairs.isNotEmpty()) {
             onStartClicked()
         }
     }
@@ -179,11 +184,97 @@ class MainActivity : AppCompatActivity() {
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
+    // ---- 登录 / 退出登录（切换服务器）----
+
+    /** 点击登录：保存当前服务器字段，后台验证连接，连得上才标记为已登录并锁定输入框。 */
+    private fun onLoginClicked() {
+        saveServerFields()
+        if (prefs.host.isBlank() || prefs.username.isBlank()) {
+            SyncState.log("请先填写服务器 IP 和用户名。")
+            return
+        }
+
+        binding.btnLogin.isEnabled = false
+        binding.tvLoginStatus.text = "登录中…"
+        SyncState.log("正在登录 ${prefs.host} …")
+
+        lifecycleScope.launch {
+            val err = withContext(Dispatchers.IO) { verifyLogin() }
+            if (err == null) {
+                prefs.loggedIn = true
+                SyncState.log("✓ 已登录 ${prefs.host}")
+            } else {
+                prefs.loggedIn = false
+                SyncState.log("✗ $err")
+            }
+            applyLoginState()
+        }
+    }
+
+    /**
+     * 验证登录：若已配置同步对，直接连其真实共享目录（最可靠）；否则连服务器根验证凭据。
+     * @return 成功返回 null，失败返回错误信息。
+     */
+    private fun verifyLogin(): String? {
+        val pairs = prefs.pairs
+        return if (pairs.isNotEmpty()) {
+            SmbUploader(
+                host = prefs.host,
+                sharePath = pairs.first().serverDir,
+                username = prefs.username,
+                password = prefs.password,
+                domain = prefs.domain
+            ).connectError()
+        } else {
+            SmbUploader.loginError(prefs.host, prefs.username, prefs.password, prefs.domain)
+        }
+    }
+
+    /** 点击退出登录：停止后台同步，解锁服务器输入框以便切换到另一台服务器（保留已填内容）。 */
+    private fun onLogoutClicked() {
+        AlertDialog.Builder(this)
+            .setTitle("退出登录")
+            .setMessage("退出后将停止后台同步，并解锁服务器设置，方便切换到另一台服务器。\n（已填的 IP / 用户名 / 密码会保留，可直接修改）")
+            .setPositiveButton("退出登录") { _, _ ->
+                if (SyncState.running.value) SyncService.stop(this)
+                prefs.loggedIn = false
+                SyncState.log("已退出登录，可修改服务器设置后重新登录。")
+                applyLoginState()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 根据登录状态刷新输入框可编辑性、登录/退出按钮与状态文字。 */
+    private fun applyLoginState() {
+        val loggedIn = prefs.loggedIn
+        binding.etHost.isEnabled = !loggedIn
+        binding.etUser.isEnabled = !loggedIn
+        binding.etPassword.isEnabled = !loggedIn
+        binding.etDomain.isEnabled = !loggedIn
+
+        binding.btnLogin.isEnabled = !loggedIn
+        binding.btnLogin.text = if (loggedIn) "已登录" else "登录"
+        binding.btnLogout.isEnabled = loggedIn
+
+        binding.tvLoginStatus.text = if (loggedIn) {
+            val u = prefs.username
+            "已登录：${prefs.host}" + if (u.isNotBlank()) "（$u）" else ""
+        } else {
+            "未登录（填好服务器信息后点登录）"
+        }
+        updateControls()
+    }
+
     // ---- 启动 / 暂停 / 状态 ----
 
     private fun onStartClicked() {
         saveServerFields()
 
+        if (!prefs.loggedIn) {
+            SyncState.log("请先登录服务器，再开启后台同步。")
+            return
+        }
         if (prefs.host.isBlank() || prefs.username.isBlank()) {
             SyncState.log("请先填写服务器 IP 和用户名。")
             return
@@ -258,8 +349,9 @@ class MainActivity : AppCompatActivity() {
         }
         binding.tvStatus.text = "状态：${SyncState.status.value}$pauseSuffix"
 
-        binding.btnSync.isEnabled = !running
+        binding.btnSync.isEnabled = prefs.loggedIn && !running
         binding.btnSync.text = when {
+            !prefs.loggedIn -> "请先登录"
             !running -> "开启后台同步"
             paused && until > 0L -> "已暂停（${formatTime(until)} 自动继续）"
             paused -> "已暂停"
