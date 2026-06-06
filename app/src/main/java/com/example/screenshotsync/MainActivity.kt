@@ -326,10 +326,11 @@ class MainActivity : AppCompatActivity() {
                 }
                 launch {
                     SyncState.logs.collect { lines ->
-                        binding.tvLog.text = lines.joinToString("\n")
+                        // 时间倒序：最新的日志显示在最上面
+                        binding.tvLog.text = lines.asReversed().joinToString("\n")
                         binding.tvLog.post {
                             (binding.tvLog.parent.parent as? android.widget.ScrollView)
-                                ?.fullScroll(android.view.View.FOCUS_DOWN)
+                                ?.fullScroll(android.view.View.FOCUS_UP)
                         }
                     }
                 }
