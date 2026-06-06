@@ -259,7 +259,12 @@ class MainActivity : AppCompatActivity() {
         binding.tvStatus.text = "状态：${SyncState.status.value}$pauseSuffix"
 
         binding.btnSync.isEnabled = !running
-        binding.btnSync.text = if (running) "后台同步运行中" else "开启后台同步"
+        binding.btnSync.text = when {
+            !running -> "开启后台同步"
+            paused && until > 0L -> "已暂停（${formatTime(until)} 自动继续）"
+            paused -> "已暂停"
+            else -> "后台同步运行中"
+        }
 
         binding.btnPause.isEnabled = running
         binding.btnPause.text = if (paused) "继续" else "暂停"
