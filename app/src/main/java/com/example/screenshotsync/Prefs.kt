@@ -1,6 +1,8 @@
 package com.example.screenshotsync
 
 import android.content.Context
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * 简单的本地配置存储。
@@ -12,13 +14,11 @@ class Prefs(context: Context) {
 
     private val sp = context.getSharedPreferences("screenshot_sync", Context.MODE_PRIVATE)
 
+    // ---- 全局服务器配置（所有同步对共用一台服务器）----
+
     var host: String
         get() = sp.getString(KEY_HOST, "") ?: ""
         set(v) = sp.edit().putString(KEY_HOST, v).apply()
-
-    var sharePath: String
-        get() = sp.getString(KEY_SHARE, "") ?: ""
-        set(v) = sp.edit().putString(KEY_SHARE, v).apply()
 
     var username: String
         get() = sp.getString(KEY_USER, "") ?: ""
@@ -51,20 +51,46 @@ class Prefs(context: Context) {
         get() = sp.getLong(KEY_RESUME_AT, 0L)
         set(v) = sp.edit().putLong(KEY_RESUME_AT, v).apply()
 
-    /** 已成功上传过的文件标识集合，避免重复上传 */
-    var syncedKeys: MutableSet<String>
-        get() = HashSet(sp.getStringSet(KEY_SYNCED, emptySet()) ?: emptySet())
-        set(v) = sp.edit().putStringSet(KEY_SYNCED, v).apply()
+    // ---- 同步对列表 ----
 
-    fun markSynced(key: String) {
-        val set = syncedKeys
-        set.add(key)
-        syncedKeys = set
-    }
+    /**
+     * 用户配置的同步对：每个同步对 = 一个手机本地目录（SAF tree Uri）+ 一个服务器目录。
+     * 以 JSON 字符串持久化。
+     */
+    var pairs: List<SyncPair>
+        get() {
+            val raw = sp.getString(KEY_PAIRS, "") ?: ""
+            if (raw.isBlank()) return emptyList()
+            return try {
+                val arr = JSONArray(raw)
+                (0 until arr.length()).map { i ->
+                    val o = arr.getJSONObject(i)
+                    SyncPair(
+                        id = o.optString("id"),
+                        localUri = o.optString("localUri"),
+                        localName = o.optString("localName"),
+                        serverDir = o.optString("serverDir")
+                    )
+                }
+            } catch (e: Exception) {
+                emptyList()
+            }
+        }
+        set(v) {
+            val arr = JSONArray()
+            v.forEach { p ->
+                arr.put(JSONObject().apply {
+                    put("id", p.id)
+                    put("localUri", p.localUri)
+                    put("localName", p.localName)
+                    put("serverDir", p.serverDir)
+                })
+            }
+            sp.edit().putString(KEY_PAIRS, arr.toString()).apply()
+        }
 
     companion object {
         private const val KEY_HOST = "host"
-        private const val KEY_SHARE = "share"
         private const val KEY_USER = "user"
         private const val KEY_PASS = "pass"
         private const val KEY_DOMAIN = "domain"
@@ -72,6 +98,6 @@ class Prefs(context: Context) {
         private const val KEY_SERVICE = "service_enabled"
         private const val KEY_PAUSED = "paused"
         private const val KEY_RESUME_AT = "resume_at"
-        private const val KEY_SYNCED = "synced"
+        private const val KEY_PAIRS = "pairs"
     }
 }

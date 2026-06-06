@@ -22,6 +22,7 @@ import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -43,6 +44,7 @@ class SyncService : Service() {
 
     private lateinit var prefs: Prefs
     private var observer: ContentObserver? = null
+    private var pollJob: Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -71,9 +73,24 @@ class SyncService : Service() {
         }
 
         startInForeground()
+        startPolling()
 
         if (!SyncState.paused.value) kickScan()
         return START_STICKY
+    }
+
+    /**
+     * 定时轮询：SAF 目录无法可靠用 ContentObserver 监听，因此周期性扫描各同步对。
+     * MediaStore 的 ContentObserver 仍保留，用于截图/照片等媒体变化时即时触发。
+     */
+    private fun startPolling() {
+        if (pollJob?.isActive == true) return
+        pollJob = scope.launch {
+            while (true) {
+                delay(POLL_INTERVAL_MS)
+                if (SyncState.running.value && !SyncState.paused.value) kickScan()
+            }
+        }
     }
 
     override fun onDestroy() {
@@ -219,60 +236,65 @@ class SyncService : Service() {
     private suspend fun runScan() {
         if (SyncState.paused.value || !SyncState.running.value) return
 
-        if (prefs.host.isBlank() || prefs.sharePath.isBlank() || prefs.username.isBlank()) {
+        if (prefs.host.isBlank() || prefs.username.isBlank()) {
             SyncState.status.value = "未配置服务器"
             updateNotification()
             return
         }
 
-        // 新截图刚生成时 MediaStore 可能尚未写完，稍等片刻再处理
+        val pairs = prefs.pairs
+        if (pairs.isEmpty()) {
+            SyncState.status.value = "未配置同步对"
+            updateNotification()
+            return
+        }
+
+        // 新文件刚生成时可能尚未写完，稍等片刻再处理
         delay(800)
         if (SyncState.paused.value || !SyncState.running.value) return
 
-        val uploader = SmbUploader(
-            host = prefs.host,
-            sharePath = prefs.sharePath,
-            username = prefs.username,
-            password = prefs.password,
-            domain = prefs.domain
-        )
-
-        val connErr = uploader.connectError()
-        if (connErr != null) {
-            SyncState.status.value = "连接失败"
-            SyncState.log("✗ $connErr")
-            updateNotification()
-            return
-        }
-
-        val images = ScreenshotRepository.listScreenshots(contentResolver)
-        if (images.isEmpty()) {
-            SyncState.status.value = "监视中"
-            updateNotification()
-            return
-        }
-
-        for (image in images) {
+        for (pair in pairs) {
             if (SyncState.paused.value || !SyncState.running.value) break
+            if (pair.localUri.isBlank() || pair.serverDir.isBlank()) continue
 
-            SyncState.status.value = "上传中…"
-            updateNotification()
+            val uploader = SmbUploader(
+                host = prefs.host,
+                sharePath = pair.serverDir,
+                username = prefs.username,
+                password = prefs.password,
+                domain = prefs.domain
+            )
 
-            when (val result = uploader.upload(image, contentResolver)) {
-                is UploadResult.Uploaded -> {
-                    prefs.markSynced(image.key)
-                    val deleted = ScreenshotRepository.deleteLocal(contentResolver, image)
-                    SyncState.uploadedCount.value = SyncState.uploadedCount.value + 1
-                    SyncState.log("↑ ${image.name}" + if (deleted) "（已删本地）" else "（本地删除失败）")
-                }
-                is UploadResult.Skipped -> {
-                    // 服务器已有同名同大小文件，视为已同步，删本地
-                    prefs.markSynced(image.key)
-                    val deleted = ScreenshotRepository.deleteLocal(contentResolver, image)
-                    if (deleted) SyncState.log("✓ ${image.name}（服务器已存在，删本地）")
-                }
-                is UploadResult.Failed -> {
-                    SyncState.log("✗ ${image.name}：${result.reason}")
+            val connErr = uploader.connectError()
+            if (connErr != null) {
+                SyncState.status.value = "连接失败"
+                SyncState.log("✗ [${pair.localName}] $connErr")
+                updateNotification()
+                continue
+            }
+
+            val files = LocalFolderRepository.listFiles(contentResolver, Uri.parse(pair.localUri))
+            for (file in files) {
+                if (SyncState.paused.value || !SyncState.running.value) break
+
+                SyncState.status.value = "上传中…"
+                updateNotification()
+
+                when (val result = uploader.upload(file, contentResolver)) {
+                    is UploadResult.Uploaded -> {
+                        // 移动模式：上传成功后删除本地文件
+                        val deleted = LocalFolderRepository.delete(contentResolver, file.uri)
+                        SyncState.uploadedCount.value = SyncState.uploadedCount.value + 1
+                        SyncState.log("↑ ${pair.localName}/${file.name}" + if (deleted) "（已删本地）" else "（本地删除失败）")
+                    }
+                    is UploadResult.Skipped -> {
+                        // 服务器已有同名同大小文件，视为已同步，删本地
+                        val deleted = LocalFolderRepository.delete(contentResolver, file.uri)
+                        if (deleted) SyncState.log("✓ ${pair.localName}/${file.name}（服务器已存在，删本地）")
+                    }
+                    is UploadResult.Failed -> {
+                        SyncState.log("✗ ${pair.localName}/${file.name}：${result.reason}")
+                    }
                 }
             }
         }
@@ -380,6 +402,9 @@ class SyncService : Service() {
 
         /** 定时暂停时长：30 分钟 */
         const val PAUSE_DURATION_MS = 30 * 60 * 1000L
+
+        /** 轮询扫描间隔：60 秒 */
+        private const val POLL_INTERVAL_MS = 60_000L
 
         const val ACTION_START = "com.example.screenshotsync.START"
         const val ACTION_PAUSE = "com.example.screenshotsync.PAUSE"

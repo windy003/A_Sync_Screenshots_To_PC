@@ -6,9 +6,13 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.os.Environment
-import android.provider.Settings
+import android.view.Gravity
+import android.widget.Button
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -16,34 +20,21 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.example.screenshotsync.databinding.ActivityMainBinding
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private lateinit var prefs: Prefs
 
-    /** 申请「所有文件访问」后返回，重新检查并启动 */
-    private val allFilesLauncher =
-        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-            if (hasStorageAccess()) {
-                requestNotificationThenStart()
-            } else {
-                SyncState.log("未授予「所有文件访问」权限，无法在后台自动删除本地截图。")
-            }
-        }
-
     /** Android 13+ 通知权限（不阻塞流程） */
     private val notificationLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* 忽略结果 */ }
 
-    /** Android 9 及以下的读写存储权限 */
-    private val legacyStorageLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
-            if (result.values.all { it }) {
-                requestNotificationThenStart()
-            } else {
-                SyncState.log("未授予存储权限，无法读取/删除截图。")
-            }
+    /** 选择手机本地目录（SAF）。返回目录的 tree Uri。 */
+    private val pickFolderLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+            if (uri != null) onFolderPicked(uri)
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -53,7 +44,9 @@ class MainActivity : AppCompatActivity() {
         prefs = Prefs(this)
 
         restoreFields()
+        renderPairs()
 
+        binding.btnAddPair.setOnClickListener { pickFolderLauncher.launch(null) }
         binding.btnSync.setOnClickListener { onStartClicked() }
         binding.btnPause.setOnClickListener { onPauseToggle() }
         binding.btnPause30.setOnClickListener { SyncService.pause30(this) }
@@ -63,41 +56,140 @@ class MainActivity : AppCompatActivity() {
         observeState()
 
         // 打开即自动开启后台同步
-        if (prefs.autoSync && prefs.host.isNotBlank() && prefs.sharePath.isNotBlank()) {
+        if (prefs.autoSync && prefs.host.isNotBlank() && prefs.pairs.isNotEmpty()) {
             onStartClicked()
         }
     }
 
     private fun restoreFields() {
         binding.etHost.setText(prefs.host)
-        binding.etSharePath.setText(prefs.sharePath)
         binding.etUser.setText(prefs.username)
         binding.etPassword.setText(prefs.password)
         binding.etDomain.setText(prefs.domain)
         binding.cbAutoSync.isChecked = prefs.autoSync
     }
 
-    private fun saveFields() {
+    private fun saveServerFields() {
         prefs.host = binding.etHost.text.toString().trim()
-        prefs.sharePath = binding.etSharePath.text.toString().trim()
         prefs.username = binding.etUser.text.toString().trim()
         prefs.password = binding.etPassword.text.toString()
         prefs.domain = binding.etDomain.text.toString().trim()
         prefs.autoSync = binding.cbAutoSync.isChecked
     }
 
+    // ---- 同步对管理 ----
+
+    private fun onFolderPicked(uri: Uri) {
+        // 持久化目录访问权限（含写权限，用于上传后删除），重启后服务仍可访问
+        try {
+            contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+        } catch (e: Exception) {
+            SyncState.log("无法获取目录持久访问权限：${e.message}")
+        }
+        val name = LocalFolderRepository.displayName(uri)
+        promptServerDir(uri.toString(), name, existing = null)
+    }
+
+    /** 弹窗输入/编辑该同步对对应的服务器目录 */
+    private fun promptServerDir(localUri: String, localName: String, existing: SyncPair?) {
+        val input = EditText(this).apply {
+            hint = "服务器目录，如 共享名/子目录"
+            setText(existing?.serverDir ?: "")
+            setSingleLine(true)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("本地：$localName")
+            .setMessage("填写要同步到的服务器目录（相对共享根）")
+            .setView(input)
+            .setPositiveButton("保存") { _, _ ->
+                val dir = input.text.toString().trim().trim('/')
+                if (dir.isBlank()) {
+                    SyncState.log("服务器目录不能为空，未保存该同步对。")
+                    return@setPositiveButton
+                }
+                val list = prefs.pairs.toMutableList()
+                if (existing != null) {
+                    val idx = list.indexOfFirst { it.id == existing.id }
+                    if (idx >= 0) list[idx] = existing.copy(serverDir = dir)
+                } else {
+                    list.add(SyncPair(UUID.randomUUID().toString(), localUri, localName, dir))
+                }
+                prefs.pairs = list
+                renderPairs()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun deletePair(pair: SyncPair) {
+        AlertDialog.Builder(this)
+            .setTitle("删除同步对")
+            .setMessage("确定删除「${pair.localName} → ${pair.serverDir}」吗？\n（仅移除同步配置，不会动已上传的文件）")
+            .setPositiveButton("删除") { _, _ ->
+                prefs.pairs = prefs.pairs.filterNot { it.id == pair.id }
+                // 尝试释放该目录的持久访问权限
+                try {
+                    contentResolver.releasePersistableUriPermission(
+                        Uri.parse(pair.localUri),
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                    )
+                } catch (_: Exception) {
+                }
+                renderPairs()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun renderPairs() {
+        val container = binding.pairsContainer
+        container.removeAllViews()
+        val pairs = prefs.pairs
+        if (pairs.isEmpty()) {
+            container.addView(TextView(this).apply {
+                text = "（暂无同步对，点上方按钮添加）"
+                setPadding(0, dp(8), 0, dp(8))
+            })
+            return
+        }
+        for (pair in pairs) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(6), 0, dp(6))
+            }
+            val label = TextView(this).apply {
+                text = "${pair.localName}\n  →  ${pair.serverDir}"
+                textSize = 13f
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                setOnClickListener { promptServerDir(pair.localUri, pair.localName, pair) }
+            }
+            val del = Button(this, null, android.R.attr.buttonStyleSmall).apply {
+                text = "删除"
+                setOnClickListener { deletePair(pair) }
+            }
+            row.addView(label)
+            row.addView(del)
+            container.addView(row)
+        }
+    }
+
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
     // ---- 启动 / 暂停 / 状态 ----
 
     private fun onStartClicked() {
-        saveFields()
+        saveServerFields()
 
-        if (prefs.host.isBlank() || prefs.sharePath.isBlank() || prefs.username.isBlank()) {
-            SyncState.log("请先填写服务器 IP、共享路径和用户名。")
+        if (prefs.host.isBlank() || prefs.username.isBlank()) {
+            SyncState.log("请先填写服务器 IP 和用户名。")
             return
         }
-
-        if (!hasStorageAccess()) {
-            requestStorageAccess()
+        if (prefs.pairs.isEmpty()) {
+            SyncState.log("请先添加至少一个同步对。")
             return
         }
         requestNotificationThenStart()
@@ -121,44 +213,6 @@ class MainActivity : AppCompatActivity() {
             SyncService.resume(this)
         } else {
             SyncService.pause(this)
-        }
-    }
-
-    // ---- 权限 ----
-
-    private fun hasStorageAccess(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            Environment.isExternalStorageManager()
-        } else {
-            val read = ContextCompat.checkSelfPermission(
-                this, Manifest.permission.READ_EXTERNAL_STORAGE
-            ) == PackageManager.PERMISSION_GRANTED
-            val write = ContextCompat.checkSelfPermission(
-                this, Manifest.permission.WRITE_EXTERNAL_STORAGE
-            ) == PackageManager.PERMISSION_GRANTED
-            read && write
-        }
-    }
-
-    private fun requestStorageAccess() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            SyncState.log("需要「所有文件访问」权限才能在后台自动删除截图，请在弹出的设置页开启。")
-            val intent = try {
-                Intent(
-                    Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
-                    Uri.parse("package:$packageName")
-                )
-            } catch (e: Exception) {
-                Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-            }
-            allFilesLauncher.launch(intent)
-        } else {
-            legacyStorageLauncher.launch(
-                arrayOf(
-                    Manifest.permission.READ_EXTERNAL_STORAGE,
-                    Manifest.permission.WRITE_EXTERNAL_STORAGE
-                )
-            )
         }
     }
 

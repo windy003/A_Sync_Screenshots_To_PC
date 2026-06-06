@@ -14,7 +14,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginBottom="12dp"
-            android:text="将截图文件夹同步到局域网 Win11 共享"
+            android:text="将手机目录同步到局域网 Win11 共享（SMB）"
             android:textSize="14sp"
             android:textStyle="bold" />
 
@@ -23,14 +23,6 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:hint="服务器 IP（例如 192.168.1.50）"
-            android:inputType="text"
-            android:singleLine="true" />
-
-        <EditText
-            android:id="@+id/etSharePath"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:hint="共享路径（例如 共享名/Screenshots）"
             android:inputType="text"
             android:singleLine="true" />
 
@@ -57,6 +49,47 @@
             android:hint="域（可留空，一般填工作组或电脑名）"
             android:inputType="text"
             android:singleLine="true" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="14dp"
+            android:background="?android:attr/listDivider" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="同步对（本地目录 → 服务器目录）"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="上传成功后会删除手机上的源文件（移动模式）"
+            android:textColor="#B0000000"
+            android:textSize="12sp" />
+
+        <Button
+            android:id="@+id/btnAddPair"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="添加同步对（选择手机目录）" />
+
+        <LinearLayout
+            android:id="@+id/pairsContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:orientation="vertical" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="14dp"
+            android:background="?android:attr/listDivider" />
 
         <CheckBox
             android:id="@+id/cbAutoSync"

@@ -55,15 +55,15 @@ class SmbUploader(
      * 上传单个文件。
      * @return UploadResult 表示跳过 / 已上传 / 失败
      */
-    fun upload(image: LocalImage, resolver: ContentResolver): UploadResult {
+    fun upload(file: LocalFile, resolver: ContentResolver): UploadResult {
         return try {
             val dir = SmbFile(baseUrl, ctx)
             // 用 (parent, child) 构造，子文件名自动做 URL 编码
-            val remote = SmbFile(dir, image.name)
-            if (remote.exists() && remote.length() == image.size) {
+            val remote = SmbFile(dir, file.name)
+            if (remote.exists() && remote.length() == file.size) {
                 return UploadResult.Skipped
             }
-            resolver.openInputStream(image.uri)?.use { input ->
+            resolver.openInputStream(file.uri)?.use { input ->
                 SmbFileOutputStream(remote).use { output ->
                     input.copyTo(output, DEFAULT_BUFFER_SIZE * 8)
                 }
