@@ -46,6 +46,11 @@ class Prefs(context: Context) {
         get() = sp.getBoolean(KEY_PAUSED, false)
         set(v) = sp.edit().putBoolean(KEY_PAUSED, v).apply()
 
+    /** 定时暂停的自动恢复时间点（毫秒时间戳），0 表示无定时暂停 */
+    var resumeAt: Long
+        get() = sp.getLong(KEY_RESUME_AT, 0L)
+        set(v) = sp.edit().putLong(KEY_RESUME_AT, v).apply()
+
     /** 已成功上传过的文件标识集合，避免重复上传 */
     var syncedKeys: MutableSet<String>
         get() = HashSet(sp.getStringSet(KEY_SYNCED, emptySet()) ?: emptySet())
@@ -66,6 +71,7 @@ class Prefs(context: Context) {
         private const val KEY_AUTO = "auto"
         private const val KEY_SERVICE = "service_enabled"
         private const val KEY_PAUSED = "paused"
+        private const val KEY_RESUME_AT = "resume_at"
         private const val KEY_SYNCED = "synced"
     }
 }

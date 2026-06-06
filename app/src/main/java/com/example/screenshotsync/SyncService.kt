@@ -1,5 +1,6 @@
 package com.example.screenshotsync
 
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -16,6 +17,9 @@ import android.os.IBinder
 import android.os.Looper
 import android.provider.MediaStore
 import androidx.core.app.NotificationCompat
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -53,6 +57,7 @@ class SyncService : Service() {
         when (intent?.action) {
             ACTION_PAUSE -> setPaused(true)
             ACTION_RESUME -> setPaused(false)
+            ACTION_PAUSE_30 -> setPausedTimed(PAUSE_DURATION_MS)
             ACTION_STOP -> {
                 stopEverything()
                 return START_NOT_STICKY
@@ -61,10 +66,7 @@ class SyncService : Service() {
                 // 启动 / 恢复
                 prefs.serviceEnabled = true
                 SyncState.running.value = true
-                SyncState.paused.value = prefs.paused
-                if (SyncState.status.value == "未启动") {
-                    SyncState.status.value = if (prefs.paused) "已暂停" else "监视中"
-                }
+                restorePauseState()
             }
         }
 
@@ -84,6 +86,11 @@ class SyncService : Service() {
     // ---- 暂停 / 继续 / 停止 ----
 
     private fun setPaused(paused: Boolean) {
+        // 手动暂停 / 继续都会取消定时暂停
+        cancelResumeAlarm()
+        prefs.resumeAt = 0L
+        SyncState.pausedUntil.value = 0L
+
         SyncState.paused.value = paused
         prefs.paused = paused
         SyncState.status.value = if (paused) "已暂停" else "监视中"
@@ -92,18 +99,86 @@ class SyncService : Service() {
         if (!paused) kickScan()
     }
 
+    /** 暂停指定时长，到点后由 AlarmManager 触发 ACTION_RESUME 自动继续 */
+    private fun setPausedTimed(durationMs: Long) {
+        val until = System.currentTimeMillis() + durationMs
+        prefs.resumeAt = until
+        SyncState.pausedUntil.value = until
+        scheduleResumeAlarm(until)
+
+        SyncState.paused.value = true
+        prefs.paused = true
+        SyncState.status.value = "已暂停"
+        val mins = (durationMs / 60_000L).toInt()
+        SyncState.log("⏸ 暂停 $mins 分钟，将于 ${formatTime(until)} 自动继续")
+        updateNotification()
+    }
+
+    /** 服务启动 / 恢复时，根据持久化状态还原暂停（含定时暂停）状态 */
+    private fun restorePauseState() {
+        val resumeAt = prefs.resumeAt
+        if (prefs.paused && resumeAt > 0L) {
+            if (System.currentTimeMillis() >= resumeAt) {
+                // 定时已到期，直接继续
+                setPaused(false)
+            } else {
+                // 仍在定时暂停期内，恢复暂停并重新挂上闹钟
+                SyncState.pausedUntil.value = resumeAt
+                SyncState.paused.value = true
+                scheduleResumeAlarm(resumeAt)
+                SyncState.status.value = "已暂停"
+                SyncState.log("⏸ 定时暂停中，将于 ${formatTime(resumeAt)} 自动继续")
+            }
+        } else {
+            SyncState.paused.value = prefs.paused
+            SyncState.pausedUntil.value = 0L
+            if (SyncState.status.value == "未启动") {
+                SyncState.status.value = if (prefs.paused) "已暂停" else "监视中"
+            }
+        }
+    }
+
     private fun stopEverything() {
         SyncState.log("■ 已停止后台同步")
+        cancelResumeAlarm()
         SyncState.running.value = false
         SyncState.paused.value = false
+        SyncState.pausedUntil.value = 0L
         SyncState.status.value = "未启动"
         prefs.serviceEnabled = false
         prefs.paused = false
+        prefs.resumeAt = 0L
         observer?.let { contentResolver.unregisterContentObserver(it) }
         observer = null
         stopForegroundCompat()
         stopSelf()
     }
+
+    // ---- 定时恢复闹钟 ----
+
+    private fun resumeAlarmPi(): PendingIntent {
+        val intent = Intent(this, SyncService::class.java).setAction(ACTION_RESUME)
+        return PendingIntent.getService(this, RESUME_REQ, intent, piFlags())
+    }
+
+    private fun scheduleResumeAlarm(triggerAt: Long) {
+        val am = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val pi = resumeAlarmPi()
+        // 用 setAndAllowWhileIdle：可穿透 Doze，且无需精确闹钟权限（30 分钟无需秒级精确）
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            am.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pi)
+        } else {
+            am.set(AlarmManager.RTC_WAKEUP, triggerAt, pi)
+        }
+    }
+
+    private fun cancelResumeAlarm() {
+        val am = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        am.cancel(resumeAlarmPi())
+    }
+
+    private fun formatTime(ms: Long): String =
+        SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(ms))
 
     // ---- 监视 ----
 
@@ -237,14 +312,17 @@ class SyncService : Service() {
         } else {
             NotificationCompat.Action(0, "暂停", servicePi(ACTION_PAUSE))
         }
+        val pause30 = NotificationCompat.Action(0, "暂停30分", servicePi(ACTION_PAUSE_30))
         val stop = NotificationCompat.Action(0, "停止", servicePi(ACTION_STOP))
 
+        val until = SyncState.pausedUntil.value
         val text = buildString {
             append(SyncState.status.value)
+            if (paused && until > 0L) append("，${formatTime(until)} 自动继续")
             if (count > 0) append("，已同步 $count 张")
         }
 
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(if (paused) "截图同步（已暂停）" else "截图同步")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.stat_sys_upload)
@@ -252,6 +330,11 @@ class SyncService : Service() {
             .setOnlyAlertOnce(true)
             .setContentIntent(openIntent)
             .addAction(toggle)
+
+        // 未暂停时额外提供「暂停30分」快捷操作
+        if (!paused) builder.addAction(pause30)
+
+        return builder
             .addAction(stop)
             .build()
     }
@@ -293,15 +376,21 @@ class SyncService : Service() {
     companion object {
         private const val CHANNEL_ID = "screenshot_sync"
         private const val NOTIF_ID = 1001
+        private const val RESUME_REQ = 2001
+
+        /** 定时暂停时长：30 分钟 */
+        const val PAUSE_DURATION_MS = 30 * 60 * 1000L
 
         const val ACTION_START = "com.example.screenshotsync.START"
         const val ACTION_PAUSE = "com.example.screenshotsync.PAUSE"
         const val ACTION_RESUME = "com.example.screenshotsync.RESUME"
+        const val ACTION_PAUSE_30 = "com.example.screenshotsync.PAUSE_30"
         const val ACTION_STOP = "com.example.screenshotsync.STOP"
 
         fun start(context: Context) = sendAction(context, ACTION_START)
         fun pause(context: Context) = sendAction(context, ACTION_PAUSE)
         fun resume(context: Context) = sendAction(context, ACTION_RESUME)
+        fun pause30(context: Context) = sendAction(context, ACTION_PAUSE_30)
         fun stop(context: Context) = sendAction(context, ACTION_STOP)
 
         private fun sendAction(context: Context, action: String) {

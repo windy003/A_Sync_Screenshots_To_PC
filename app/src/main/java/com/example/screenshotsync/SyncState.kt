@@ -17,6 +17,9 @@ object SyncState {
     /** 是否处于暂停状态 */
     val paused = MutableStateFlow(false)
 
+    /** 定时暂停的自动恢复时间点（毫秒时间戳），0 表示不是定时暂停 */
+    val pausedUntil = MutableStateFlow(0L)
+
     /** 当前状态文字，例如「监视中」「上传中…」 */
     val status = MutableStateFlow("未启动")
 

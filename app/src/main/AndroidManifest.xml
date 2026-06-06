@@ -49,6 +49,18 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- 快速设置磁贴：一键暂停 30 分钟 / 继续 -->
+        <service
+            android:name=".PauseTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_30"
+            android:label="暂停同步30分"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
         <receiver
             android:name=".BootReceiver"
             android:exported="true">

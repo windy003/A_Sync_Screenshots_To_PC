@@ -56,7 +56,9 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnSync.setOnClickListener { onStartClicked() }
         binding.btnPause.setOnClickListener { onPauseToggle() }
+        binding.btnPause30.setOnClickListener { SyncService.pause30(this) }
         binding.btnStop.setOnClickListener { SyncService.stop(this) }
+        binding.btnClearLog.setOnClickListener { SyncState.clearLogs() }
 
         observeState()
 
@@ -175,6 +177,9 @@ class MainActivity : AppCompatActivity() {
                     SyncState.paused.collect { updateControls() }
                 }
                 launch {
+                    SyncState.pausedUntil.collect { updateControls() }
+                }
+                launch {
                     SyncState.logs.collect { lines ->
                         binding.tvLog.text = lines.joinToString("\n")
                         binding.tvLog.post {
@@ -190,10 +195,14 @@ class MainActivity : AppCompatActivity() {
     private fun updateControls() {
         val running = SyncState.running.value
         val paused = SyncState.paused.value
+        val until = SyncState.pausedUntil.value
 
-        val statusText = SyncState.status.value +
-            if (running && paused) "（已暂停）" else ""
-        binding.tvStatus.text = "状态：$statusText"
+        val pauseSuffix = when {
+            !running || !paused -> ""
+            until > 0L -> "（已暂停，${formatTime(until)} 自动继续）"
+            else -> "（已暂停）"
+        }
+        binding.tvStatus.text = "状态：${SyncState.status.value}$pauseSuffix"
 
         binding.btnSync.isEnabled = !running
         binding.btnSync.text = if (running) "后台同步运行中" else "开启后台同步"
@@ -201,6 +210,13 @@ class MainActivity : AppCompatActivity() {
         binding.btnPause.isEnabled = running
         binding.btnPause.text = if (paused) "继续" else "暂停"
 
+        // 已经暂停时再按「暂停30分」无意义，仅在运行且未暂停时可用
+        binding.btnPause30.isEnabled = running && !paused
+
         binding.btnStop.isEnabled = running
     }
+
+    private fun formatTime(ms: Long): String =
+        java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+            .format(java.util.Date(ms))
 }
