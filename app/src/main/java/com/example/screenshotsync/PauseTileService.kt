@@ -63,7 +63,8 @@ class PauseTileService : TileService() {
 
     private fun render(running: Boolean, paused: Boolean, resumeAt: Long) {
         val tile = qsTile ?: return
-        tile.state = if (running && !paused) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
+        // 高亮表示“正在暂停中”：仅当后台运行且处于暂停状态时点亮磁贴
+        tile.state = if (running && paused) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
         tile.icon = Icon.createWithResource(this, R.drawable.ic_tile_30)
         tile.label = when {
             !running -> "截图同步"
