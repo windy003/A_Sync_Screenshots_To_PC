@@ -277,6 +277,12 @@ class SyncService : Service() {
             for (file in files) {
                 if (SyncState.paused.value || !SyncState.running.value) break
 
+                // 静默期：文件最后修改时间距今不足 1 分钟时先跳过，
+                // 留出时间让用户编辑截图；编辑会刷新修改时间从而重置计时。
+                // lastModified 为 0（无法获取）时不拦截，保持旧行为。
+                val age = System.currentTimeMillis() - file.lastModified
+                if (file.lastModified > 0L && age < QUIET_PERIOD_MS) continue
+
                 SyncState.status.value = "上传中…"
                 updateNotification()
 
@@ -405,6 +411,9 @@ class SyncService : Service() {
 
         /** 轮询扫描间隔：60 秒 */
         private const val POLL_INTERVAL_MS = 60_000L
+
+        /** 静默期：文件最后修改后需静置满此时长才上传，留出编辑时间 */
+        private const val QUIET_PERIOD_MS = 60_000L
 
         const val ACTION_START = "com.example.screenshotsync.START"
         const val ACTION_PAUSE = "com.example.screenshotsync.PAUSE"

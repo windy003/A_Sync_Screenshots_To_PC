@@ -8,7 +8,9 @@ import android.provider.DocumentsContract
 data class LocalFile(
     val uri: Uri,
     val name: String,
-    val size: Long
+    val size: Long,
+    /** 最后修改时间（毫秒，自纪元）。无法获取时为 0。 */
+    val lastModified: Long
 )
 
 /**
@@ -33,7 +35,8 @@ object LocalFolderRepository {
             DocumentsContract.Document.COLUMN_DOCUMENT_ID,
             DocumentsContract.Document.COLUMN_DISPLAY_NAME,
             DocumentsContract.Document.COLUMN_SIZE,
-            DocumentsContract.Document.COLUMN_MIME_TYPE
+            DocumentsContract.Document.COLUMN_MIME_TYPE,
+            DocumentsContract.Document.COLUMN_LAST_MODIFIED
         )
         try {
             resolver.query(childrenUri, projection, null, null, null)?.use { c ->
@@ -43,8 +46,9 @@ object LocalFolderRepository {
                     if (mime == DocumentsContract.Document.MIME_TYPE_DIR) continue
                     val name = c.getString(1) ?: id.substringAfterLast('/')
                     val size = if (c.isNull(2)) 0L else c.getLong(2)
+                    val lastModified = if (c.isNull(4)) 0L else c.getLong(4)
                     val fileUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, id)
-                    result.add(LocalFile(fileUri, name, size))
+                    result.add(LocalFile(fileUri, name, size, lastModified))
                 }
             }
         } catch (e: Exception) {
