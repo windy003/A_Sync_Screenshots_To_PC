@@ -32,6 +32,24 @@ class Prefs(context: Context) {
         get() = sp.getString(KEY_DOMAIN, "") ?: ""
         set(v) = sp.edit().putString(KEY_DOMAIN, v).apply()
 
+    // ---- 备用账号（登录时若主账号失败，依次尝试）----
+
+    var backupUsername1: String
+        get() = sp.getString(KEY_BACKUP_USER1, "") ?: ""
+        set(v) = sp.edit().putString(KEY_BACKUP_USER1, v).apply()
+
+    var backupPassword1: String
+        get() = sp.getString(KEY_BACKUP_PASS1, "") ?: ""
+        set(v) = sp.edit().putString(KEY_BACKUP_PASS1, v).apply()
+
+    var backupUsername2: String
+        get() = sp.getString(KEY_BACKUP_USER2, "") ?: ""
+        set(v) = sp.edit().putString(KEY_BACKUP_USER2, v).apply()
+
+    var backupPassword2: String
+        get() = sp.getString(KEY_BACKUP_PASS2, "") ?: ""
+        set(v) = sp.edit().putString(KEY_BACKUP_PASS2, v).apply()
+
     var autoSync: Boolean
         get() = sp.getBoolean(KEY_AUTO, false)
         set(v) = sp.edit().putBoolean(KEY_AUTO, v).apply()
@@ -102,6 +120,10 @@ class Prefs(context: Context) {
         private const val KEY_USER = "user"
         private const val KEY_PASS = "pass"
         private const val KEY_DOMAIN = "domain"
+        private const val KEY_BACKUP_USER1 = "backup_user1"
+        private const val KEY_BACKUP_PASS1 = "backup_pass1"
+        private const val KEY_BACKUP_USER2 = "backup_user2"
+        private const val KEY_BACKUP_PASS2 = "backup_pass2"
         private const val KEY_AUTO = "auto"
         private const val KEY_LOGGED_IN = "logged_in"
         private const val KEY_SERVICE = "service_enabled"

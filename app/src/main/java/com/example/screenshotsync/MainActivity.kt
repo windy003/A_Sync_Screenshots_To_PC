@@ -71,6 +71,10 @@ class MainActivity : AppCompatActivity() {
         binding.etUser.setText(prefs.username)
         binding.etPassword.setText(prefs.password)
         binding.etDomain.setText(prefs.domain)
+        binding.etBackupUser1.setText(prefs.backupUsername1)
+        binding.etBackupPassword1.setText(prefs.backupPassword1)
+        binding.etBackupUser2.setText(prefs.backupUsername2)
+        binding.etBackupPassword2.setText(prefs.backupPassword2)
         binding.cbAutoSync.isChecked = prefs.autoSync
     }
 
@@ -79,6 +83,10 @@ class MainActivity : AppCompatActivity() {
         prefs.username = binding.etUser.text.toString().trim()
         prefs.password = binding.etPassword.text.toString()
         prefs.domain = binding.etDomain.text.toString().trim()
+        prefs.backupUsername1 = binding.etBackupUser1.text.toString().trim()
+        prefs.backupPassword1 = binding.etBackupPassword1.text.toString()
+        prefs.backupUsername2 = binding.etBackupUser2.text.toString().trim()
+        prefs.backupPassword2 = binding.etBackupPassword2.text.toString()
         prefs.autoSync = binding.cbAutoSync.isChecked
     }
 
@@ -186,11 +194,40 @@ class MainActivity : AppCompatActivity() {
 
     // ---- 登录 / 退出登录（切换服务器）----
 
-    /** 点击登录：保存当前服务器字段，后台验证连接，连得上才标记为已登录并锁定输入框。 */
+    /** 一组待尝试的登录凭据：用户名/密码 + 用于日志展示的标签 */
+    private data class Credential(val label: String, val username: String, val password: String)
+
+    /** 按顺序收集要尝试的凭据：主账号 → 备用账号1 → 备用账号2（用户名为空的槽位跳过）。 */
+    private fun candidateCredentials(): List<Credential> {
+        val list = mutableListOf<Credential>()
+        val user = binding.etUser.text.toString().trim()
+        if (user.isNotBlank()) {
+            list.add(Credential("主账号", user, binding.etPassword.text.toString()))
+        }
+        val backup1 = binding.etBackupUser1.text.toString().trim()
+        if (backup1.isNotBlank()) {
+            list.add(Credential("备用账号1", backup1, binding.etBackupPassword1.text.toString()))
+        }
+        val backup2 = binding.etBackupUser2.text.toString().trim()
+        if (backup2.isNotBlank()) {
+            list.add(Credential("备用账号2", backup2, binding.etBackupPassword2.text.toString()))
+        }
+        return list
+    }
+
+    /**
+     * 点击登录：保存当前服务器字段，依次尝试主账号和最多两个备用账号，
+     * 第一个连接成功的凭据即停止尝试，并成为之后同步实际使用的账号。
+     */
     private fun onLoginClicked() {
         saveServerFields()
-        if (prefs.host.isBlank() || prefs.username.isBlank()) {
-            SyncState.log("请先填写服务器 IP 和用户名。")
+        if (prefs.host.isBlank()) {
+            SyncState.log("请先填写服务器 IP。")
+            return
+        }
+        val candidates = candidateCredentials()
+        if (candidates.isEmpty()) {
+            SyncState.log("请至少填写一个账号的用户名。")
             return
         }
 
@@ -199,13 +236,30 @@ class MainActivity : AppCompatActivity() {
         SyncState.log("正在登录 ${prefs.host} …")
 
         lifecycleScope.launch {
-            val err = withContext(Dispatchers.IO) { verifyLogin() }
-            if (err == null) {
+            var success: Credential? = null
+            for (cred in candidates) {
+                SyncState.log("尝试${cred.label}（${cred.username}）…")
+                val err = withContext(Dispatchers.IO) { verifyLogin(cred.username, cred.password) }
+                if (err == null) {
+                    success = cred
+                    break
+                } else {
+                    SyncState.log("✗ ${cred.label} 登录失败：$err")
+                }
+            }
+            if (success != null) {
+                // 成功的凭据设为当前生效账号，后台同步服务读取的也是这一套。
+                // 同时把主账号输入框的文字也换成它，避免之后 saveServerFields()
+                // （例如点"开启后台同步"时）又用输入框里旧的主账号文字把它覆盖回去。
+                binding.etUser.setText(success.username)
+                binding.etPassword.setText(success.password)
+                prefs.username = success.username
+                prefs.password = success.password
                 prefs.loggedIn = true
-                SyncState.log("✓ 已登录 ${prefs.host}")
+                SyncState.log("✓ 已登录 ${prefs.host}（使用${success.label}：${success.username}）")
             } else {
                 prefs.loggedIn = false
-                SyncState.log("✗ $err")
+                SyncState.log("✗ 所有账号均登录失败")
             }
             applyLoginState()
         }
@@ -215,18 +269,18 @@ class MainActivity : AppCompatActivity() {
      * 验证登录：若已配置同步对，直接连其真实共享目录（最可靠）；否则连服务器根验证凭据。
      * @return 成功返回 null，失败返回错误信息。
      */
-    private fun verifyLogin(): String? {
+    private fun verifyLogin(username: String, password: String): String? {
         val pairs = prefs.pairs
         return if (pairs.isNotEmpty()) {
             SmbUploader(
                 host = prefs.host,
                 sharePath = pairs.first().serverDir,
-                username = prefs.username,
-                password = prefs.password,
+                username = username,
+                password = password,
                 domain = prefs.domain
             ).connectError()
         } else {
-            SmbUploader.loginError(prefs.host, prefs.username, prefs.password, prefs.domain)
+            SmbUploader.loginError(prefs.host, username, password, prefs.domain)
         }
     }
 
@@ -252,6 +306,10 @@ class MainActivity : AppCompatActivity() {
         binding.etUser.isEnabled = !loggedIn
         binding.etPassword.isEnabled = !loggedIn
         binding.etDomain.isEnabled = !loggedIn
+        binding.etBackupUser1.isEnabled = !loggedIn
+        binding.etBackupPassword1.isEnabled = !loggedIn
+        binding.etBackupUser2.isEnabled = !loggedIn
+        binding.etBackupPassword2.isEnabled = !loggedIn
 
         binding.btnLogin.isEnabled = !loggedIn
         binding.btnLogin.text = if (loggedIn) "已登录" else "登录"

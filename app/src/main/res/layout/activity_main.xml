@@ -51,6 +51,47 @@
             android:singleLine="true" />
 
         <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="备用账号（可选，主账号登录失败时依次尝试）"
+            android:textSize="12sp"
+            android:textColor="#B0000000" />
+
+        <EditText
+            android:id="@+id/etBackupUser1"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="备用账号1 - 用户名"
+            android:inputType="text"
+            android:singleLine="true" />
+
+        <EditText
+            android:id="@+id/etBackupPassword1"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="备用账号1 - 密码"
+            android:inputType="textPassword"
+            android:singleLine="true" />
+
+        <EditText
+            android:id="@+id/etBackupUser2"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:hint="备用账号2 - 用户名"
+            android:inputType="text"
+            android:singleLine="true" />
+
+        <EditText
+            android:id="@+id/etBackupPassword2"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="备用账号2 - 密码"
+            android:inputType="textPassword"
+            android:singleLine="true" />
+
+        <TextView
             android:id="@+id/tvLoginStatus"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
