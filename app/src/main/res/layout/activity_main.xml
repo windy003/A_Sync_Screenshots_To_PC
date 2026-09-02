@@ -234,6 +234,15 @@
         </LinearLayout>
 
         <TextView
+            android:id="@+id/tvDelay"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:lineSpacingExtra="2dp"
+            android:textSize="12sp"
+            android:text="" />
+
+        <TextView
             android:id="@+id/tvLog"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

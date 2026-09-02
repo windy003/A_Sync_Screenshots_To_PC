@@ -409,11 +409,11 @@ class SyncService : Service() {
         /** 定时暂停时长：30 分钟 */
         const val PAUSE_DURATION_MS = 30 * 60 * 1000L
 
-        /** 轮询扫描间隔：60 秒 */
-        private const val POLL_INTERVAL_MS = 60_000L
+        /** 轮询扫描间隔：60 秒（界面上的延迟说明也取这个值） */
+        const val POLL_INTERVAL_MS = 60_000L
 
         /** 静默期：文件最后修改后需静置满此时长才上传，留出编辑时间 */
-        private const val QUIET_PERIOD_MS = 60_000L
+        const val QUIET_PERIOD_MS = 60_000L
 
         const val ACTION_START = "com.example.screenshotsync.START"
         const val ACTION_PAUSE = "com.example.screenshotsync.PAUSE"

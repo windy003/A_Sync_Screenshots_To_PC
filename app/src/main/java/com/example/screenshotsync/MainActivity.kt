@@ -48,6 +48,7 @@ class MainActivity : AppCompatActivity() {
         restoreFields()
         renderPairs()
         applyLoginState()
+        showDelayHint()
 
         binding.btnAddPair.setOnClickListener { pickFolderLauncher.launch(null) }
         binding.btnLogin.setOnClickListener { onLoginClicked() }
@@ -424,6 +425,18 @@ class MainActivity : AppCompatActivity() {
         binding.btnPause30.isEnabled = running && !paused
 
         binding.btnStop.isEnabled = running
+    }
+
+    // ---- 延迟情况显示 ----
+
+    /** 在状态下方明文说明同步的延迟规则，数值取自服务里的常量，改常量文字自动同步。 */
+    private fun showDelayHint() {
+        val quietSec = SyncService.QUIET_PERIOD_MS / 1000
+        val pollSec = SyncService.POLL_INTERVAL_MS / 1000
+        val maxSec = (SyncService.QUIET_PERIOD_MS + SyncService.POLL_INTERVAL_MS) / 1000
+        binding.tvDelay.text =
+            "延迟说明：截图需静置 $quietSec 秒（期间可编辑，编辑后重新计时）才会上传，" +
+                "且每 $pollSec 秒扫描一次，因此从截图到上传通常要 $quietSec ~ $maxSec 秒。"
     }
 
     private fun formatTime(ms: Long): String =
